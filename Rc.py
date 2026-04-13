@@ -1,39 +1,87 @@
 import requests
 import uuid
 import json
-import time
 import random
+from flask import Flask, request, jsonify
 
-# A list of common User-Agents to help disguise the requests
+app = Flask(__name__)
+
+# User-Agents to disguise requests
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36"
 ]
 
 def get_free_proxies() -> list:
-    """Fetches a live list of free HTTP proxies from a public repository."""
-    print("[*] Fetching live free proxies...")
+    """Fetches a live list of free HTTP proxies."""
     url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        # Split the text by newlines and return the list
-        proxies = response.text.strip().split('\n')
-        print(f"[*] Successfully loaded {len(proxies)} free proxies.")
-        return proxies
-    except Exception as e:
-        print(f"[!] Failed to fetch proxies: {e}")
+        return response.text.strip().split('\n')
+    except Exception:
         return []
 
 def rc_lookup(rc_number: str, proxy_list: list) -> dict:
-    if not rc_number.strip():
-        return {"status": "error", "message": "No RC number"}
-
     session_id = f"{uuid.uuid4()}-{uuid.uuid4()}"
     payload = {
         "regNo": rc_number.strip().upper(),
+        "sessionid": session_id
+    }
+
+    max_attempts = 10 
+    for attempt in range(1, max_attempts + 1):
+        proxy_address = random.choice(proxy_list) if proxy_list else None
+        proxies = {"http": f"http://{proxy_address}", "https": f"http://{proxy_address}"} if proxy_address else None
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.91wheels.com",
+            "Referer": "https://www.91wheels.com/",
+            "User-Agent": random.choice(USER_AGENTS)
+        }
+
+        try:
+            response = requests.post(
+                "https://api1.91wheels.com/api/v1/third/rc-detail",
+                headers=headers,
+                data=json.dumps(payload),
+                proxies=proxies,
+                timeout=8 
+            )
+
+            if response.status_code in [429, 403] or "limit" in response.text.lower():
+                continue # Blocked, try next proxy
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.RequestException:
+            continue # Failed connection, try next proxy
+
+    return {"status": "error", "message": "Failed to get data after multiple proxy attempts."}
+
+# --- Web API Routes ---
+
+@app.route('/')
+def home():
+    return "API is running! To look up a vehicle, add /lookup?rc=YOUR_NUMBER to the end of this URL."
+
+@app.route('/lookup')
+def lookup():
+    rc = request.args.get('rc')
+    if not rc:
+        return jsonify({"status": "error", "message": "No RC Number provided."}), 400
+    
+    free_proxies = get_free_proxies()
+    result = rc_lookup(rc, proxy_list=free_proxies)
+    return jsonify(result)
+
+# Fixed dunder (NameError)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
         "sessionid": session_id
     }
 
